@@ -10,8 +10,10 @@ import com.icemoneyprinter.track.audio.ScriptAligner
 import com.icemoneyprinter.track.audio.ScriptLoader
 import com.icemoneyprinter.track.audio.WavParser
 import com.icemoneyprinter.track.data.FolderScanner
+import com.icemoneyprinter.track.data.JobStore
 import com.icemoneyprinter.track.data.MappingStore
 import com.icemoneyprinter.track.data.NarrationInfo
+import com.icemoneyprinter.track.data.PersistedJob
 import com.icemoneyprinter.track.data.SavedMapping
 import com.icemoneyprinter.track.data.ScanResult
 import com.icemoneyprinter.track.model.AudioStructure
@@ -23,8 +25,9 @@ import com.icemoneyprinter.track.pacing.TapAssignment
 import com.icemoneyprinter.track.pacing.TapRecord
 import com.icemoneyprinter.track.pacing.TimelineBuilder
 import com.icemoneyprinter.track.render.FreeSpace
-import com.icemoneyprinter.track.render.MediaStoreExporter
-import com.icemoneyprinter.track.render.VideoRenderer
+import com.icemoneyprinter.track.render.PipelineBus
+import com.icemoneyprinter.track.render.PipelineStatus
+import com.icemoneyprinter.track.render.RenderService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -253,32 +256,34 @@ class TrackViewModel(app: Application) : AndroidViewModel(app) {
 
     fun runPipeline() {
         val context = getApplication<Application>()
-        val info = narration ?: return
         val uri = folderUri ?: return
-        job?.cancel()
-        job = viewModelScope.launch {
-            _state.value = _state.value.copy(busy = true)
+        val info = narration ?: return
+        viewModelScope.launch {
             try {
                 val pool = _state.value.pool
                 if (pool.isEmpty()) fail("No images found in the folder")
 
-                val timeline = when (_state.value.mode) {
+                val timeline: Timeline
+                val tappedMode: Boolean
+                when (_state.value.mode) {
                     RunMode.AUTO -> {
                         val structure = _state.value.structure
                             ?: fail("Narration not analyzed yet — re-pick the folder or pick the narration file")
-                        withContext(Dispatchers.Default) {
+                        timeline = withContext(Dispatchers.Default) {
                             TimelineBuilder().buildAuto(pool, structure, PacingConfig())
                         }
+                        tappedMode = false
                     }
                     RunMode.TAPPED -> {
                         val assignment = _state.value.tapAssignment
                             ?: fail("Guided tap session not finished — tap images or reuse the saved mapping")
-                        assignment.timeline
+                        timeline = assignment.timeline
+                        tappedMode = true
                     }
                 }
                 _state.value = _state.value.copy(lastTimeline = timeline)
 
-                // Persist the tap mapping for one-tap re-render later.
+                // Persist mapping for one-tap re-render (tapped mode only).
                 if (_state.value.mode == RunMode.TAPPED && _state.value.taps.isNotEmpty()) {
                     val key = folderKey
                     if (key != null) {
@@ -294,34 +299,60 @@ class TrackViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
 
-                val cacheDir = File(context.cacheDir, "render").apply { mkdirs() }
-                val outputFile = File(cacheDir, "track_render.mp4")
-                val needed = FreeSpace.estimatedOutputBytes(timeline.durationMs)
-                val available = FreeSpace.availableBytes(cacheDir)
-                if (available < needed) {
-                    fail("Not enough disk space: need ~${needed / 1_000_000}MB, have ${available / 1_000_000}MB")
-                }
-
-                _state.value = _state.value.copy(
-                    stage = Stage.Rendering(0),
-                    audioDurationMs = timeline.audioDurationMs,
+                // Persist the job and hand rendering to the foreground service (plan D9).
+                JobStore.save(
+                    context,
+                    PersistedJob(
+                        folderUri = uri.toString(),
+                        audioUri = info.uri.toString(),
+                        narrationName = info.displayName,
+                        audioDurationMs = timeline.audioDurationMs,
+                        tappedMode = tappedMode,
+                        slots = timeline.slots,
+                        completedArcs = emptyList(),
+                    ),
                 )
-                val result = VideoRenderer(context).render(timeline, info.uri, outputFile) { pct ->
-                    _state.value = _state.value.copy(stage = Stage.Rendering(pct))
-                }
-                val rendered = result.getOrElse { fail("Render failed: ${it.message ?: it::class.simpleName}") }
-
-                _state.value = _state.value.copy(stage = Stage.Exporting("Saving to Movies/TRACK…"))
-                val exportedUri = withContext(Dispatchers.IO) {
-                    MediaStoreExporter.exportMp4(context, rendered, "TRACK_${System.currentTimeMillis()}.mp4")
-                }
-                _state.value = _state.value.copy(busy = false, stage = Stage.Done(exportedUri, rendered.absolutePath))
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
+                RenderService.start(context)
+                _state.value = _state.value.copy(busy = true, stage = Stage.Rendering(0))
             } catch (e: PipelineCancelled) {
-                // stage already recorded by fail()
+                // recorded by fail()
             } catch (e: Exception) {
                 fail("Unexpected error: ${e.message ?: e::class.simpleName}")
+            }
+        }
+    }
+
+    /** Maps the service pipeline's status bus onto the UI stage state. */
+    fun observePipeline() {
+        viewModelScope.launch {
+            PipelineBus.status.collect { status ->
+                when (status) {
+                    is PipelineStatus.Starting ->
+                        _state.value = _state.value.copy(busy = true, stage = Stage.Rendering(0))
+                    is PipelineStatus.RenderingArc ->
+                        _state.value = _state.value.copy(
+                            busy = true,
+                            stage = Stage.Rendering(
+                                if (status.total > 0) status.done * 100 / status.total else 0,
+                            ),
+                        )
+                    is PipelineStatus.EncodingAudio ->
+                        _state.value = _state.value.copy(busy = true, stage = Stage.Planning(status.message))
+                    is PipelineStatus.Concatting ->
+                        _state.value = _state.value.copy(busy = true, stage = Stage.Exporting("Stitching arcs…"))
+                    is PipelineStatus.Exporting ->
+                        _state.value = _state.value.copy(busy = true, stage = Stage.Exporting(status.message))
+                    is PipelineStatus.Finished ->
+                        _state.value = _state.value.copy(
+                            busy = false,
+                            stage = Stage.Done(status.outputUri, status.outputPath),
+                        )
+                    is PipelineStatus.Failed ->
+                        _state.value = _state.value.copy(busy = false, stage = Stage.Failed(status.message))
+                    is PipelineStatus.Cancelled ->
+                        _state.value = _state.value.copy(busy = false, stage = Stage.Failed("Render cancelled"))
+                    null -> Unit
+                }
             }
         }
     }

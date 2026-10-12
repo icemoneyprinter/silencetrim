@@ -34,7 +34,7 @@ class VideoRenderer(private val context: Context) {
 
     suspend fun render(
         timeline: Timeline,
-        audioUri: Uri,
+        audioUri: Uri?,
         outputFile: File,
         onProgress: (percent: Int) -> Unit,
     ): Result<File> {
@@ -56,10 +56,17 @@ class VideoRenderer(private val context: Context) {
                         .setFrameRate(OUTPUT_FRAME_RATE)
                         .build()
                 }
-                val audioItem = EditedMediaItem.Builder(MediaItem.fromUri(audioUri)).build()
+                // Arcs are video-only (audio is muxed once in the final pass, plan D8).
+                // audioUri == null renders a silent video-only segment.
+                val sequences = buildList {
+                    add(EditedMediaItemSequence(imageItems))
+                    audioUri?.let {
+                        add(EditedMediaItemSequence(listOf(EditedMediaItem.Builder(MediaItem.fromUri(it)).build())))
+                    }
+                }
                 val composition = Composition.Builder(
-                    EditedMediaItemSequence(imageItems),
-                    EditedMediaItemSequence(listOf(audioItem)),
+                    sequences.first(),
+                    *sequences.drop(1).toTypedArray(),
                 ).build()
 
                 val t = Transformer.Builder(context)

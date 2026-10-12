@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -24,6 +25,12 @@ class MainActivity : ComponentActivity() {
             val vm: TrackViewModel = viewModel()
             val state by vm.state.collectAsState()
             val navController = rememberNavController()
+
+            // Pick up service pipeline status (render progress, done, failures).
+            DisposableEffect(vm) {
+                vm.observePipeline()
+                onDispose { }
+            }
 
             TRACKTheme {
                 NavHost(navController = navController, startDestination = "home") {

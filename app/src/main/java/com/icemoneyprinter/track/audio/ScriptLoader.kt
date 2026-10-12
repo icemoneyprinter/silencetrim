@@ -14,7 +14,24 @@ object ScriptLoader {
 
     private val NAMES = listOf("script.txt", "script.md")
 
-    fun load(context: Context, treeUri: Uri): List<String>? {
+    fun load(context: Context, treeUri: Uri): List<String>? = loadTree(context, treeUri)
+
+    fun loadDir(dir: java.io.File?): List<String>? {
+        if (dir == null) return null
+        for (name in NAMES) {
+            val file = java.io.File(dir, name)
+            if (!file.exists()) continue
+            val text = runCatching { file.readText() }.getOrNull() ?: continue
+            val sentences = text
+                .split(Regex("[.!?]+\\s+|\\n+"))
+                .map { it.trim() }
+                .filter { it.length >= 3 }
+            if (sentences.isNotEmpty()) return sentences
+        }
+        return null
+    }
+
+    private fun loadTree(context: Context, treeUri: Uri): List<String>? {
         val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
             treeUri,
             DocumentsContract.getTreeDocumentId(treeUri),

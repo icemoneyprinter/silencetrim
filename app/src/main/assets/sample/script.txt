@@ -1,0 +1,6 @@
+This is the TRACK sample project.
+Each slide matches one spoken sentence.
+The app listens to the narration pauses.
+Then it lines the slides up with the words.
+Tap a slide when you want it to appear.
+Press build and watch the video come out.

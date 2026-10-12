@@ -11,8 +11,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.icemoneyprinter.track.ui.HelpScreen
 import com.icemoneyprinter.track.ui.HomeScreen
 import com.icemoneyprinter.track.ui.PreviewScreen
+import com.icemoneyprinter.track.ui.SettingsScreen
 import com.icemoneyprinter.track.ui.TapSessionScreen
 import com.icemoneyprinter.track.ui.TrackViewModel
 import com.icemoneyprinter.track.ui.theme.TRACKTheme
@@ -38,6 +40,8 @@ class MainActivity : ComponentActivity() {
                         HomeScreen(
                             vm = vm,
                             onGuidedTap = { navController.navigate("tap") },
+                            onSettings = { navController.navigate("settings") },
+                            onHelp = { navController.navigate("help") },
                         )
                     }
                     composable("tap") {
@@ -56,6 +60,12 @@ class MainActivity : ComponentActivity() {
                             onBuild = vm::runPipeline,
                             onBack = { navController.popBackStack() },
                         )
+                    }
+                    composable("settings") {
+                        SettingsScreen(onBack = { navController.popBackStack() })
+                    }
+                    composable("help") {
+                        HelpScreen(onBack = { navController.popBackStack() })
                     }
                 }
             }

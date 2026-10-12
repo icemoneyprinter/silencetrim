@@ -22,6 +22,7 @@ data class ScanResult(
     val narration: NarrationInfo?,
     val audioCandidates: List<NarrationInfo>,
     val scriptPresent: Boolean,
+    val wordsPresent: Boolean,
 )
 
 /**
@@ -35,6 +36,7 @@ object FolderScanner {
     private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp", "heic", "heif", "bmp")
     private val AUDIO_EXTENSIONS = setOf("wav", "mp3", "m4a", "aac", "opus", "ogg")
     private val SCRIPT_NAMES = setOf("script.txt", "script.md")
+    private val WORDS_NAMES = setOf("words.json")
 
     suspend fun scan(
         context: Context,
@@ -63,6 +65,7 @@ object FolderScanner {
         val images = ArrayList<Candidate>()
         val audio = ArrayList<Candidate>()
         var scriptPresent = false
+        var wordsPresent = false
 
         context.contentResolver.query(childrenUri, projection, null, null, null)?.use { c ->
             val idIdx = c.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
@@ -86,6 +89,7 @@ object FolderScanner {
                     mime.startsWith("audio/") || ext in AUDIO_EXTENSIONS ->
                         audio.add(Candidate(uri, name, size, modified))
                     name.lowercase() in SCRIPT_NAMES -> scriptPresent = true
+                    name.lowercase() in WORDS_NAMES -> wordsPresent = true
                 }
             }
         }
@@ -125,8 +129,49 @@ object FolderScanner {
             narration = sorted.firstOrNull(),
             audioCandidates = sorted,
             scriptPresent = scriptPresent,
+            wordsPresent = wordsPresent,
         )
     }
+
+    /**
+     * Same ingest rules for a real directory (used by the bundled sample project),
+     * where there is no SAF tree to walk.
+     */
+    suspend fun scanLocal(dir: java.io.File, onProgress: (Int, Int) -> Unit): ScanResult =
+        withContext(Dispatchers.IO) {
+            val files = dir.listFiles()?.filter { it.isFile } ?: emptyList()
+            val imageFiles = files.filter { file ->
+                file.extension.lowercase() in IMAGE_EXTENSIONS
+            }.sortedWith(compareBy({ it.lastModified() }, { it.name }))
+            val audioFiles = files.filter { file ->
+                file.extension.lowercase() in AUDIO_EXTENSIONS
+            }
+            val scriptPresent = files.any { it.name.lowercase() in SCRIPT_NAMES }
+            val wordsPresent = files.any { it.name.lowercase() in WORDS_NAMES }
+
+            val seen = HashSet<String>()
+            val deduped = ArrayList<ImageItem>()
+            imageFiles.forEachIndexed { i, file ->
+                val hash = hashMd5(java.io.FileInputStream(file))
+                onProgress(i + 1, imageFiles.size)
+                if (hash != null && seen.add(hash)) {
+                    deduped.add(
+                        ImageItem(
+                            uriString = Uri.fromFile(file).toString(),
+                            displayName = file.name,
+                            contentHash = hash,
+                            sizeBytes = file.length(),
+                            lastModified = file.lastModified(),
+                        ),
+                    )
+                }
+            }
+            val sorted = audioFiles
+                .sortedWith(compareByDescending<java.io.File> { it.name.lowercase().endsWith(".wav") }
+                    .thenByDescending { it.length() })
+                .map { NarrationInfo(Uri.fromFile(it), it.name, it.name.lowercase().endsWith(".wav")) }
+            ScanResult(deduped, sorted.firstOrNull(), sorted, scriptPresent, wordsPresent)
+        }
 
     private fun hashMd5(input: InputStream?): String? {
         if (input == null) return null

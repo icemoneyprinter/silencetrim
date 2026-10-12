@@ -40,13 +40,20 @@ class TapAssigner(
     fun assignFromTaps(
         taps: List<TapRecord>,
         structure: AudioStructure,
+        words: com.icemoneyprinter.track.audio.WordsData? = null,
     ): TapAssignment {
         if (taps.isEmpty()) {
             return TapAssignment(Timeline(emptyList(), structure.durationMs), 0)
         }
 
-        // Pause edges are the snapping candidates (both boundaries of every pause).
-        val edges = structure.pauses.flatMap { listOf(it.startMs, it.endMs) }.sorted()
+        // Snapping candidates: with words.json, real word gaps (and, failing that, all
+        // word boundaries) searched within ±1.5s; without, pause edges within ±600ms.
+        val (edges, window) = if (words != null) {
+            val gaps = words.gapBoundaries(150)
+            (gaps.ifEmpty { words.allBoundaries() }.sorted()) to 1_500L
+        } else {
+            structure.pauses.flatMap { listOf(it.startMs, it.endMs) }.sorted() to snapWindowMs
+        }
 
         data class Bounded(val record: TapRecord, var boundary: Long)
 
@@ -61,7 +68,7 @@ class TapAssigner(
                     // '<=' tie-breaks toward the later edge (pause end): when the intent
                     // lands inside a pause, cutting at the pause end starts the new image
                         // with the next sentence.
-                    if (dist <= snapWindowMs && dist <= bestDist) {
+                    if (dist <= window && dist <= bestDist) {
                         best = edge
                         bestDist = dist
                     }

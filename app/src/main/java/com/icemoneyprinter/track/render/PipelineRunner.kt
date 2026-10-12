@@ -2,6 +2,7 @@ package com.icemoneyprinter.track.render
 
 import android.net.Uri
 import com.icemoneyprinter.track.audio.AacEncoder
+import com.icemoneyprinter.track.audio.AudioDecoder
 import com.icemoneyprinter.track.audio.WavParser
 import com.icemoneyprinter.track.data.JobStore
 import com.icemoneyprinter.track.data.PersistedJob
@@ -51,7 +52,10 @@ class PipelineRunner(private val context: android.content.Context) {
             val pcmBytes = context.contentResolver.openInputStream(Uri.parse(job.audioUri))?.use { it.readBytes() }
                 ?: error("could not read narration")
             val pcm = WavParser.parse(pcmBytes) ?: error("could not parse narration WAV")
-            val (audioFormat, audioSamples) = AacEncoder().encode(pcm)
+            val musicPcm = job.musicUri.takeIf { it.isNotBlank() }?.let {
+                AudioDecoder.decodeToMonoPcm(context, Uri.parse(it))
+            }
+            val (audioFormat, audioSamples) = AacEncoder().encode(pcm, musicPcm, job.musicGain)
                 ?: error("AAC encoding failed on this device")
 
             // Determine which arcs still need rendering (resume).

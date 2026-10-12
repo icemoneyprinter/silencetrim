@@ -37,12 +37,29 @@ class AacEncoder {
     }
 
     /**
-     * Encodes the full PCM stream. Returns the encoder output format (for the muxer's
-     * addTrack) and the complete sample list. Runs the MediaCodec synchronously on the
-     * calling thread — callers should be on a background dispatcher.
+     * Encodes the full PCM stream, optionally mixing a music bed under it. Returns the
+     * encoder output format (for the muxer's addTrack) and the complete sample list.
+     * Runs the MediaCodec synchronously on the calling thread — callers should be on a
+     * background dispatcher.
      */
-    fun encode(pcm: PcmMono): Pair<android.media.MediaFormat, List<AacSample>>? {
-        val samples = resample(pcm.samples, pcm.sampleRate, TARGET_SAMPLE_RATE)
+    fun encode(
+        pcm: PcmMono,
+        musicPcm: PcmMono? = null,
+        musicGain: Float = 0.35f,
+    ): Pair<android.media.MediaFormat, List<AacSample>>? {
+        val narration = resample(pcm.samples, pcm.sampleRate, TARGET_SAMPLE_RATE)
+        val samples = if (musicPcm == null) {
+            narration
+        } else {
+            val music = resample(musicPcm.samples, musicPcm.sampleRate, TARGET_SAMPLE_RATE)
+            val out = ShortArray(narration.size)
+            for (i in narration.indices) {
+                val m = if (i < music.size) music[i] * musicGain else 0f
+                val mixed = narration[i] + m
+                out[i] = mixed.coerceIn(-32768f, 32767f).toInt().toShort()
+            }
+            out
+        }
         val sampleRate = TARGET_SAMPLE_RATE
         val bitrate = 192_000
 

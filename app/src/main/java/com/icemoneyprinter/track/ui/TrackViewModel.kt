@@ -9,6 +9,8 @@ import com.icemoneyprinter.track.audio.EnergyAnalyzer
 import com.icemoneyprinter.track.audio.ScriptAligner
 import com.icemoneyprinter.track.audio.ScriptLoader
 import com.icemoneyprinter.track.audio.WavParser
+import com.icemoneyprinter.track.audio.WordsData
+import com.icemoneyprinter.track.audio.WordsLoader
 import com.icemoneyprinter.track.data.FolderScanner
 import com.icemoneyprinter.track.data.JobStore
 import com.icemoneyprinter.track.data.MappingStore
@@ -16,6 +18,8 @@ import com.icemoneyprinter.track.data.NarrationInfo
 import com.icemoneyprinter.track.data.PersistedJob
 import com.icemoneyprinter.track.data.SavedMapping
 import com.icemoneyprinter.track.data.ScanResult
+import com.icemoneyprinter.track.data.SampleProject
+import com.icemoneyprinter.track.data.UriStreams
 import com.icemoneyprinter.track.model.AudioStructure
 import com.icemoneyprinter.track.model.ImageItem
 import com.icemoneyprinter.track.model.PacingConfig
@@ -64,6 +68,7 @@ data class TrackUiState(
     val structure: AudioStructure? = null,
     val pool: List<ImageItem> = emptyList(),
     val sentencePerSpan: List<String> = emptyList(),
+    val words: WordsData? = null,
     val estimatedSegmentation: Boolean = false,
     // tap session
     val mode: RunMode = RunMode.AUTO,
@@ -74,8 +79,11 @@ data class TrackUiState(
     val mappingAvailable: Boolean = false,
     // audio roles
     val audioCandidates: List<NarrationInfo> = emptyList(),
+    val musicCandidates: List<NarrationInfo> = emptyList(),
+    val music: String = "",
     val narrationUri: Uri? = null,
     val needsNarrationPick: Boolean = false,
+    val needsMusicPick: Boolean = false,
     // export
     val outputUri: Uri? = null,
     val lastTimeline: Timeline? = null,
@@ -107,6 +115,7 @@ class TrackViewModel(app: Application) : AndroidViewModel(app) {
                 _state.value = _state.value.copy(stage = Stage.ScanningImages(scanned, total))
             }
             narration = scan.narration
+            val remaining = scan.audioCandidates.filter { it.uri != scan.narration?.uri }
             _state.value = _state.value.copy(
                 busy = false,
                 stage = Stage.Idle,
@@ -117,6 +126,8 @@ class TrackViewModel(app: Application) : AndroidViewModel(app) {
                 scriptPresent = scan.scriptPresent,
                 audioCandidates = scan.audioCandidates,
                 narrationUri = scan.narration?.uri,
+                musicCandidates = remaining,
+                music = "",
                 needsNarrationPick = scan.audioCandidates.size > 1,
                 taps = emptyList(),
                 tapAssignment = null,
@@ -132,17 +143,64 @@ class TrackViewModel(app: Application) : AndroidViewModel(app) {
     /** User picked which audio file is the narration (roles sheet, >1 audio). */
     fun pickNarration(info: NarrationInfo) {
         narration = info
+        val remaining = _state.value.audioCandidates.filter { it.uri != info.uri }
         _state.value = _state.value.copy(
             needsNarrationPick = false,
             narrationName = info.displayName,
             narrationSupported = info.isWav,
             narrationUri = info.uri,
+            musicCandidates = remaining,
+            needsMusicPick = remaining.isNotEmpty(),
         )
         if (info.isWav) nar(info)
     }
 
+    /** Optional music bed: mixed under the narration at -35% level. */
+    fun pickMusic(info: NarrationInfo?) {
+        _state.value = _state.value.copy(
+            music = info?.uri?.toString() ?: "",
+            needsMusicPick = false,
+            musicCandidates = emptyList(),
+        )
+    }
+
     fun dismissNarrationPick() {
         _state.value = _state.value.copy(needsNarrationPick = false)
+    }
+
+    /** Loads the bundled sample project (assets → cache) and runs analysis on it. */
+    fun useSample() {
+        val context = getApplication<Application>()
+        job?.cancel()
+        job = viewModelScope.launch {
+            _state.value = _state.value.copy(busy = true, stage = Stage.ScanningImages(0, 0))
+            try {
+                val dir = withContext(Dispatchers.IO) { SampleProject.ensure(context) }
+                val scan = FolderScanner.scanLocal(dir) { scanned, total ->
+                    _state.value = _state.value.copy(stage = Stage.ScanningImages(scanned, total))
+                }
+                narration = scan.narration
+                folderUri = null
+                folderKey = null
+                _state.value = _state.value.copy(
+                    busy = false,
+                    stage = Stage.Idle,
+                    imageCount = scan.images.size,
+                    pool = scan.images,
+                    narrationName = scan.narration?.displayName,
+                    narrationSupported = scan.narration != null,
+                    scriptPresent = scan.scriptPresent,
+                    audioCandidates = scan.audioCandidates,
+                    narrationUri = scan.narration?.uri,
+                    musicCandidates = emptyList(),
+                    music = "",
+                    mode = RunMode.AUTO,
+                )
+                if (scan.narration != null) nar(scan.narration)
+            } catch (e: Exception) {
+                fail("Sample project failed: ${e.message ?: e::class.simpleName}")
+            }
+        }
     }
 
     private fun nar(info: NarrationInfo) {
@@ -153,7 +211,7 @@ class TrackViewModel(app: Application) : AndroidViewModel(app) {
             _state.value = _state.value.copy(busy = true, stage = Stage.AnalyzingAudio("Reading narration…"))
             try {
                 val bytes = withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(info.uri)!!.use { it.readBytes() }
+                    UriStreams.open(context, info.uri)!!.use { it.readBytes() }
                 }
                 audioHash = md5(bytes)
                 val pcm = WavParser.parse(bytes)
@@ -162,8 +220,14 @@ class TrackViewModel(app: Application) : AndroidViewModel(app) {
                     return@launch
                 }
                 val structure = EnergyAnalyzer().analyze(pcm)
-                val sentences = ScriptLoader.load(context, treeUri)
+                val localDir = if (folderUri == null && info.uri.scheme == "file") {
+                    info.uri.path?.let { java.io.File(it).parentFile }
+                } else {
+                    null
+                }
+                val sentences = folderUri?.let { ScriptLoader.load(context, it) } ?: ScriptLoader.loadDir(localDir)
                 val perSpan = sentences?.let { ScriptAligner.align(it, structure.spans) } ?: emptyList()
+                val words = folderUri?.let { WordsLoader.load(context, it) } ?: WordsLoader.loadDir(localDir)
 
                 val mapping = folderKey?.let { MappingStore.load(context, it) }
                 val pool = _state.value.pool
@@ -178,6 +242,7 @@ class TrackViewModel(app: Application) : AndroidViewModel(app) {
                     structure = structure,
                     audioDurationMs = structure.durationMs,
                     sentencePerSpan = perSpan,
+                    words = words,
                     estimatedSegmentation = structure.estimatedSegmentation,
                     mappingAvailable = mappingValid,
                 )
@@ -235,7 +300,7 @@ class TrackViewModel(app: Application) : AndroidViewModel(app) {
     /** Recompute the assignment from taps + current structure (fresh pauses each time). */
     fun refreshTapAssignment() {
         val structure = _state.value.structure ?: return
-        val assignment = TapAssigner().assignFromTaps(_state.value.taps, structure)
+        val assignment = TapAssigner().assignFromTaps(_state.value.taps, structure, _state.value.words)
         _state.value = _state.value.copy(tapAssignment = assignment, droppedTaps = assignment.droppedTapCount)
     }
 
@@ -254,6 +319,13 @@ class TrackViewModel(app: Application) : AndroidViewModel(app) {
     fun sentenceText(spanIndex: Int): String? =
         _state.value.sentencePerSpan.getOrNull(spanIndex)
 
+    /** The word currently being spoken, when words.json timings are loaded. */
+    fun wordAt(positionMs: Long): String? {
+        val words = _state.value.words ?: return null
+        val idx = words.wordIndexAt(positionMs)
+        return if (idx >= 0) words.words[idx].word else null
+    }
+
     fun runPipeline() {
         val context = getApplication<Application>()
         val uri = folderUri ?: return
@@ -263,6 +335,7 @@ class TrackViewModel(app: Application) : AndroidViewModel(app) {
                 val pool = _state.value.pool
                 if (pool.isEmpty()) fail("No images found in the folder")
 
+                val settings = TrackPrefs.load(context)
                 val timeline: Timeline
                 val tappedMode: Boolean
                 when (_state.value.mode) {
@@ -270,7 +343,7 @@ class TrackViewModel(app: Application) : AndroidViewModel(app) {
                         val structure = _state.value.structure
                             ?: fail("Narration not analyzed yet — re-pick the folder or pick the narration file")
                         timeline = withContext(Dispatchers.Default) {
-                            TimelineBuilder().buildAuto(pool, structure, PacingConfig())
+                            TimelineBuilder().buildAuto(pool, structure, settings.pac)
                         }
                         tappedMode = false
                     }
@@ -310,6 +383,8 @@ class TrackViewModel(app: Application) : AndroidViewModel(app) {
                         tappedMode = tappedMode,
                         slots = timeline.slots,
                         completedArcs = emptyList(),
+                        musicUri = _state.value.music,
+                        musicGain = settings.musicGain,
                     ),
                 )
                 RenderService.start(context)

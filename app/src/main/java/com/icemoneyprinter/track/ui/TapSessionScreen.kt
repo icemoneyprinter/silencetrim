@@ -101,11 +101,20 @@ fun TapSessionScreen(
             Text("Guided tapping", style = MaterialTheme.typography.titleMedium)
         }
 
-        // Current sentence (aligned to detected spans; no word timings needed).
+        // Current word highlight when words.json timings are available, else the
+        // sentence aligned to the current detected span.
+        val currentWord = vm.wordAt(positionMs)
+        if (currentWord != null) {
+            Text(
+                text = "▶ $currentWord",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
         Text(
-            text = vm.sentenceText(vm.sentenceIndexAt(positionMs)) ?: " ",
+            text = vm.sentenceText(vm.sentenceIndexAt(positionMs)) ?: " ",
             style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.primary,
+            color = MaterialTheme.colorScheme.onBackground,
             modifier = Modifier.height(64.dp),
         )
 

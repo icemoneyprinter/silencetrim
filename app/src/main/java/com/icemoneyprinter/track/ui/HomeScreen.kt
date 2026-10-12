@@ -38,6 +38,8 @@ import com.icemoneyprinter.track.ui.theme.TRACKTheme
 fun HomeScreen(
     vm: TrackViewModel,
     onGuidedTap: () -> Unit,
+    onSettings: () -> Unit,
+    onHelp: () -> Unit,
 ) {
     val state by vm.state.collectAsState()
     val context = LocalContext.current
@@ -69,17 +71,38 @@ fun HomeScreen(
                 color = MaterialTheme.colorScheme.onBackground,
             )
 
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onHelp) { Text("How it works") }
+                TextButton(onClick = onSettings) { Text("Settings") }
+            }
+
             Button(
                 onClick = { folderPicker.launch(null) },
                 enabled = !state.busy,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Pick folder (images + narration WAV)") }
 
+            TextButton(onClick = vm::useSample, enabled = !state.busy) {
+                Text("Try the sample project first")
+            }
+
             if (state.needsNarrationPick) {
                 AudioRolesSheet(
+                    title = "Which audio is the narration?",
                     candidates = state.audioCandidates,
+                    noneLabel = "Skip for now",
                     onPick = vm::pickNarration,
-                    onDismiss = vm::dismissNarrationPick,
+                    onNone = vm::dismissNarrationPick,
+                    note = "Narration must be a WAV file (Gemini TTS output). Extra audio can become a music bed next.",
+                )
+            } else if (state.needsMusicPick) {
+                AudioRolesSheet(
+                    title = "Add a music bed? (optional)",
+                    candidates = state.musicCandidates,
+                    noneLabel = "No music",
+                    onPick = vm::pickMusic,
+                    onNone = { vm.pickMusic(null) },
+                    note = "The music bed is mixed quietly under the narration.",
                 )
             }
 
@@ -184,13 +207,16 @@ fun HomeScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AudioRolesSheet(
+    title: String,
     candidates: List<NarrationInfo>,
+    noneLabel: String,
+    note: String,
     onPick: (NarrationInfo) -> Unit,
-    onDismiss: () -> Unit,
+    onNone: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(onDismissRequest = onNone) {
         Column(Modifier.padding(20.dp)) {
-            Text("Which audio is the narration?", style = MaterialTheme.typography.titleMedium)
+            Text(title, style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
             candidates.forEach { info ->
                 Card(
@@ -209,6 +235,7 @@ private fun AudioRolesSheet(
                                 color = MaterialTheme.colorScheme.onBackground,
                             )
                         }
+                        Spacer(Modifier.weight(1f))
                         Button(
                             onClick = { onPick(info) },
                             enabled = info.isWav,
@@ -217,12 +244,12 @@ private fun AudioRolesSheet(
                 }
             }
             Text(
-                text = "Extra audio files are ignored for now (music-bed mixing lands later).",
+                text = note,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onBackground,
             )
             Spacer(Modifier.height(12.dp))
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onNone) { Text(noneLabel) }
         }
     }
 }

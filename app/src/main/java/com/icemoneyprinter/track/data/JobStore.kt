@@ -16,6 +16,8 @@ data class PersistedJob(
     val tappedMode: Boolean,
     val slots: List<Slot>,
     val completedArcs: List<Int>,
+    val musicUri: String = "",
+    val musicGain: Float = 0.35f,
 )
 
 object JobStore {
@@ -32,6 +34,8 @@ object JobStore {
             appendLine("narration=${job.narrationName}")
             appendLine("duration=${job.audioDurationMs}")
             appendLine("tapped=${job.tappedMode}")
+            appendLine("music=${job.musicUri}")
+            appendLine("musicGain=${job.musicGain}")
             appendLine("arcsDone=${job.completedArcs.joinToString(",")}")
             job.slots.forEach { s ->
                 appendLine("slot=${s.imageUriString}@${s.startMs}-${s.endMs}")
@@ -49,6 +53,8 @@ object JobStore {
             var narration = ""
             var duration = 0L
             var tapped = false
+            var music = ""
+            var musicGain = 0.35f
             var arcsDone: List<Int> = emptyList()
             val slots = ArrayList<Slot>()
             file.forEachLine { line ->
@@ -59,6 +65,8 @@ object JobStore {
                     line.startsWith("narration=") -> narration = line.removePrefix("narration=")
                     line.startsWith("duration=") -> duration = line.removePrefix("duration=").toLong()
                     line.startsWith("tapped=") -> tapped = line.removePrefix("tapped=").toBoolean()
+                    line.startsWith("music=") -> music = line.removePrefix("music=")
+                    line.startsWith("musicGain=") -> musicGain = line.removePrefix("musicGain=").toFloat()
                     line.startsWith("arcsDone=") -> {
                         arcsDone = line.removePrefix("arcsDone=")
                             .split(",")
@@ -77,7 +85,7 @@ object JobStore {
                     }
                 }
             }
-            PersistedJob(folder, audio, narration, duration, tapped, slots, arcsDone)
+            PersistedJob(folder, audio, narration, duration, tapped, slots, arcsDone, music, musicGain)
         }.getOrNull()
     }
 

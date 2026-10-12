@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Rounded track/film strip backdrop -->
+    <path
+        android:fillColor="#1A2233"
+        android:pathData="M30,26 h48 a8,8 0 0 1 8,8 v40 a8,8 0 0 1 -8,8 h-48 a8,8 0 0 1 -8,-8 v-40 a8,8 0 0 1 8,-8 z" />
+    <!-- Play glyph -->
+    <path
+        android:fillColor="#7FD1FF"
+        android:pathData="M46,38 L72,52 L46,66 Z" />
+    <!-- Track ticks -->
+    <path
+        android:fillColor="#3A4A6B"
+        android:pathData="M36,76 h6 v4 h-6 z M48,76 h6 v4 h-6 z M60,76 h6 v4 h-6 z" />
+</vector>

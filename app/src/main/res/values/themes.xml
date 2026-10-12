@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Bare theme (no framework parent) is deliberate: pure Compose app, and framework
+         theme aliases are not reliable across platform versions with AAPT2. -->
+    <style name="Theme.TRACK" parent="">
+        <item name="android:windowBackground">@color/ic_launcher_background</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+</resources>

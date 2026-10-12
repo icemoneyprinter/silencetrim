@@ -20,6 +20,7 @@ data class NarrationInfo(
 data class ScanResult(
     val images: List<ImageItem>,
     val narration: NarrationInfo?,
+    val audioCandidates: List<NarrationInfo>,
     val scriptPresent: Boolean,
 )
 
@@ -33,7 +34,7 @@ object FolderScanner {
 
     private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp", "heic", "heif", "bmp")
     private val AUDIO_EXTENSIONS = setOf("wav", "mp3", "m4a", "aac", "opus", "ogg")
-    private val SCRIPT_NAMES = setOf("script.txt", "script.md", "words.json")
+    private val SCRIPT_NAMES = setOf("script.txt", "script.md")
 
     suspend fun scan(
         context: Context,
@@ -112,14 +113,19 @@ object FolderScanner {
             }
         }
 
-        // Narration: prefer WAV (Gemini TTS output) among candidates.
-        val narration = audio
-            .sortedWith(compareByDescending<Candidate> { it.name.lowercase().endsWith(".wav") }
-                .thenByDescending { it.size })
-            .firstOrNull()
-            ?.let { NarrationInfo(it.uri, it.name, it.name.lowercase().endsWith(".wav")) }
+        val sorted = audio
+            .sortedWith(
+                compareByDescending<Candidate> { it.name.lowercase().endsWith(".wav") }
+                    .thenByDescending { it.size },
+            )
+            .map { NarrationInfo(it.uri, it.name, it.name.lowercase().endsWith(".wav")) }
 
-        ScanResult(images = deduped, narration = narration, scriptPresent = scriptPresent)
+        ScanResult(
+            images = deduped,
+            narration = sorted.firstOrNull(),
+            audioCandidates = sorted,
+            scriptPresent = scriptPresent,
+        )
     }
 
     private fun hashMd5(input: InputStream?): String? {
